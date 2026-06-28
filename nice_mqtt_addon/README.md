@@ -33,6 +33,7 @@ gates:
     nice_mac: "AA:BB:CC:DD:EE:01" # MAC of the gate (printed on the IT4WIFI setup label)
     setup_code: ""              # Setup Code (printed on the IT4WIFI setup label) - needed only for first pairing
     nice_pwd: ""                # Leave empty for first binding, then fill in the password shown in the logs
+    expose_extra_buttons: false # Optional, default false. See note below.
   - name: "Back Gate"
     device_id: "back_gate"
     nice_host: "192.168.1.51"
@@ -40,6 +41,8 @@ gates:
     setup_code: ""
     nice_pwd: ""
 ```
+
+By default each gate exposes only the **Gate cover** entity (open / stop / close). The IT4WIFI supports many additional commands (Block, Partial, Courtesy, Master/Slave door, etc.), but most are not relevant to a typical gate. If you want those extra commands as **button** entities, set `expose_extra_buttons: true` on that gate. Setting it back to `false` (and restarting) removes the buttons again.
 
 Notes on `device_id`:
 

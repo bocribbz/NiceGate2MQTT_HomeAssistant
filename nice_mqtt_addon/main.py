@@ -97,6 +97,10 @@ for _g in raw_gates:
         "nice_mac": _mac,
         "nice_pwd": _g.get("nice_pwd", "") or "",
         "setup_code": _g.get("setup_code", "") or "",
+        # Only the Gate cover (open/stop/close) is exposed by default. Set this to
+        # true on a gate to also create the extra command buttons (Block, Partial,
+        # Courtesy, etc.).
+        "expose_extra_buttons": bool(_g.get("expose_extra_buttons", False)),
     })
 
 logging.basicConfig(
@@ -160,13 +164,14 @@ gates_by_cmd_topic = {}    # { command_topic: Gate } for routing incoming comman
 class Gate:
     """Holds everything that used to be global, scoped to a single gate."""
 
-    def __init__(self, name, device_id, host, mac, pwd, setup_code):
+    def __init__(self, name, device_id, host, mac, pwd, setup_code, expose_extra_buttons=False):
         self.name = name
         self.device_id = device_id
         self.host = host
         self.mac = mac
         self.pwd = pwd
         self.setup_code = setup_code
+        self.expose_extra_buttons = expose_extra_buttons
 
         self.topic_base = f"nice/{device_id}"
         self.topic_cmd = f"{self.topic_base}/set"
@@ -210,9 +215,16 @@ def publish_gate_discovery(client, gate):
         if command_key in EXCLUDE_BUTTON_COMMANDS:
             continue
 
-        readable_name = command_key.replace("_", " ").title()
         safe_slug = command_key.lower()
+        topic_config = f"homeassistant/button/{gate.device_id}_{safe_slug}/config"
 
+        if not gate.expose_extra_buttons:
+            # Clear any previously published (retained) button so HA removes the
+            # entity. Harmless if nothing was published before.
+            client.publish(topic_config, "", retain=True)
+            continue
+
+        readable_name = command_key.replace("_", " ").title()
         button_config = {
             "name": f"{readable_name}",
             "unique_id": f"{gate.device_id}_btn_{safe_slug}",
@@ -222,7 +234,6 @@ def publish_gate_discovery(client, gate):
             "icon": ICON_MAP.get(command_key, "mdi:gesture-tap-button"),
             "device": device_block
         }
-        topic_config = f"homeassistant/button/{gate.device_id}_{safe_slug}/config"
         client.publish(topic_config, json.dumps(button_config), retain=True)
         logger.info(f"[{gate.device_id}] Published discovery for button: {readable_name}")
 
@@ -283,6 +294,7 @@ async def main():
             gc["nice_mac"],
             gc["nice_pwd"],
             gc["setup_code"],
+            gc["expose_extra_buttons"],
         )
         gates.append(gate)
         gates_by_cmd_topic[gate.topic_cmd] = gate

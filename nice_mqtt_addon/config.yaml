@@ -25,6 +25,7 @@ options:
       nice_mac: ""
       setup_code: ""
       nice_pwd: ""
+      expose_extra_buttons: false
 
 schema:
   mqtt_broker: str
@@ -38,3 +39,4 @@ schema:
       nice_mac: str
       setup_code: str?
       nice_pwd: password?
+      expose_extra_buttons: bool?
