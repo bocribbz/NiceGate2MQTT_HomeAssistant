@@ -12,10 +12,11 @@ IMPORTANT: this addon works only with the gate set up in the "MyNice Welcome" ap
 
 ## AddOn Configuration
 
-You need to have a working MQTT broker (you can use HA addon)
-Before launching the addon complete the configuration
+You need to have a working MQTT broker (you can use HA addon) and the MQTT integration set up in Home Assistant.
 
-```
+As of version `2.0.0` the addon supports **multiple gates**. Each gate is defined as an entry under a `gates:` list. The MQTT settings are global (shared by all gates).
+
+```yaml
 # Complete with your broker address (if you use homeassistant addon you can leave the default value)
 mqtt_broker: "core-mosquitto"
 # Your MQTT broker port
@@ -24,21 +25,60 @@ mqtt_port: 1883
 mqtt_user: ""
 # Your MQTT password
 mqtt_pass: ""
-# The IP address of your Gate (you can find it in the router settings or in the accessory info in the Nice App)
-nice_host: ""
-# The MAC of the gate (it is written in the setup label of the IT4WIFI)
-nice_mac: ""
-# Setup Code of the gate (it is written in the setup label of the IT4WIFI)
-setup_code: ""
-# For the first binding you must leave password empty then complete with the password shown in the logs
-nice_pwd: ""
+# One entry per gate
+gates:
+  - name: "Front Gate"          # Friendly name shown in Home Assistant
+    device_id: "front_gate"     # Unique id used for entities/topics (see note below)
+    nice_host: "192.168.1.50"   # IP of the gate (router settings or accessory info in the Nice App)
+    nice_mac: "AA:BB:CC:DD:EE:01" # MAC of the gate (printed on the IT4WIFI setup label)
+    setup_code: ""              # Setup Code (printed on the IT4WIFI setup label) - needed only for first pairing
+    nice_pwd: ""                # Leave empty for first binding, then fill in the password shown in the logs
+  - name: "Back Gate"
+    device_id: "back_gate"
+    nice_host: "192.168.1.51"
+    nice_mac: "AA:BB:CC:DD:EE:02"
+    setup_code: ""
+    nice_pwd: ""
 ```
-After completing the configuration you can launch the addon. If everything goes well, the addon will stop and will give you a long password in the logs. You must copy that password and insert it in the configuration. Then you need to open your "My Nice Welcome" app and authorize the new user ("homeasistant").
-After completing this procedure, you can launch the addon and you will see in your MQTT device the gate (you must set up MQTT integration)
+
+Notes on `device_id`:
+
+* It must be **unique** for every gate. If two gates resolve to the same id the addon stops at startup with a clear error.
+* It is optional: if omitted it is derived from `name` (lowercased, non-alphanumeric characters become `_`). Setting it explicitly is recommended so renaming a gate later does not orphan its entities.
+* When upgrading from a single-gate version, keep one gate as `device_id: "nice_gate_it4wifi"` to preserve your existing Home Assistant device and entities.
+
+> Tip: the `gates` list can be edited in the form of the Configuration tab (use **＋ Add**), but with several gates it is usually easier to use the **⋮ menu → Edit in YAML**.
+
+### Pairing each gate
+
+For every gate that does not yet have a password, leave `nice_pwd` empty, then:
+
+1. Start (or restart) the addon.
+2. Open the **Log** tab. For each unpaired gate you will see a line like:
+   `[front_gate] Paired. Add this password to the gate's config and restart: <PASSWORD>. Then authorize the 'homeassisstant' user in the NiceWelcome app.`
+3. Open your "My Nice Welcome" app and **authorize** the new `homeassisstant` user (the controller rejects the connection until you do).
+4. Copy `<PASSWORD>` into that gate's `nice_pwd` and **Save**.
+5. **Restart** the addon.
+
+Gates that already have a `nice_pwd` simply connect on start. You can mix paired and unpaired gates freely: an unpaired gate is paired once, logs its password and then stays idle (without disturbing the other gates) until you fill in its password and restart.
+
+After this you will see one MQTT device per gate, each with a cover entity and the command buttons.
 
 # How to authorize user in My Nice Welcome app
 
 Open the app andopen settings (bottom right button). Then select User Management, select your accessory. You should see a request from "homeassistant"
+
+# Recovering from a denied or invalid pairing
+
+If you accidentally **deny** the `homeassisstant` user in the app (or the user is otherwise revoked), that gate will keep failing the connection handshake and retry forever in the logs. The addon does **not** automatically create a new user or prompt again while a password is configured.
+
+To recover, re-trigger pairing for that gate:
+
+1. Set that gate's `nice_pwd` back to empty (`""`) and Save.
+2. Restart the addon. It will pair again, log a new password, and raise a fresh authorization request in the app.
+3. Approve the request this time, paste the new password into `nice_pwd`, Save and Restart.
+
+Because pairing is isolated per gate, doing this for one gate does not affect your other working gates.
 
 # Possible Bugs
 
