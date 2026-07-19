@@ -30,8 +30,8 @@ gates:
   - name: "Front Gate"          # Friendly name shown in Home Assistant
     device_id: "front_gate"     # Unique id used for entities/topics (see note below)
     nice_host: "192.168.1.50"   # IP of the gate (router settings or accessory info in the Nice App)
-    nice_mac: "AA:BB:CC:DD:EE:01" # MAC of the gate (printed on the IT4WIFI setup label)
-    setup_code: ""              # Setup Code (printed on the IT4WIFI setup label) - needed only for first pairing
+    nice_mac: "AA:BB:CC:DD:EE:01" # MAC of the gate - MUST be uppercase (see note below)
+    setup_code: "123-12-123"    # Setup Code, dashes included (see note below) - needed only for first pairing
     nice_pwd: ""                # Leave empty for first binding, then fill in the password shown in the logs
     expose_extra_buttons: false # Optional, default false. See note below.
   - name: "Back Gate"
@@ -43,6 +43,12 @@ gates:
 ```
 
 By default each gate exposes only the **Gate cover** entity (open / stop / close). The IT4WIFI supports many additional commands (Block, Partial, Courtesy, Master/Slave door, etc.), but most are not relevant to a typical gate. If you want those extra commands as **button** entities, set `expose_extra_buttons: true` on that gate. Setting it back to `false` (and restarting) removes the buttons again.
+
+**Important - format of `nice_mac` and `setup_code`** (both are printed on the IT4WIFI setup label):
+
+* `nice_mac` **must be uppercase**. The device rejects a lowercase MAC. The addon uppercases it automatically, so either case works in the configuration.
+* `setup_code` must be entered **exactly as printed, including the dashes**, e.g. `123-12-123`. The code is hashed verbatim, so removing the dashes (or using another gate's code) makes pairing fail with `Pairing failed; gate will stay idle` in the log.
+* Each gate has its **own** MAC and setup code - never copy them between gates.
 
 Notes on `device_id`:
 

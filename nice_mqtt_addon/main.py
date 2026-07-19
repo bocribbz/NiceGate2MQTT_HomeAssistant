@@ -75,8 +75,9 @@ GATE_CONFIGS = []
 _seen_ids = set()
 for _g in raw_gates:
     _name = (_g.get("name") or "Gate").strip()
-    _host = _g.get("nice_host", "")
-    _mac = _g.get("nice_mac", "")
+    _host = (_g.get("nice_host", "") or "").strip()
+    # The IT4WIFI only accepts the MAC in uppercase, so normalize it here.
+    _mac = (_g.get("nice_mac", "") or "").strip().upper()
     _device_id = _g.get("device_id") or slugify(_name)
 
     if not all([_host, _mac]):
@@ -183,6 +184,7 @@ class Gate:
             mac,
             pwd,
             on_status_callback=lambda status, g=self: nice_status_callback(g, status),
+            log_id=device_id,
         )
 
 
@@ -198,7 +200,10 @@ def publish_gate_discovery(client, gate):
     }
 
     cover_config = {
-        "name": gate.name,
+        # null marks this as the device's main entity, so Home Assistant names it
+        # after the device instead of composing "<device name> <entity name>"
+        # (which produced duplicates like "Gate Gate").
+        "name": None,
         "unique_id": f"{gate.device_id}_cover",
         "device_class": "gate",
         "command_topic": gate.topic_cmd,

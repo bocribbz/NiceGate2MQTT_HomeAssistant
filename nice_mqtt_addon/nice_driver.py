@@ -20,14 +20,19 @@ BACKOFF_FACTOR = 2
 class NiceGateApi:
     """API Standalone per Nice IT4WIFI."""
 
-    def __init__(self, host: str, mac: str, pwd: str, on_status_callback: Callable[[str], None] = None):
+    def __init__(self, host: str, mac: str, pwd: str, on_status_callback: Callable[[str], None] = None,
+                 log_id: str = None):
         self.host = host
         self.target = mac
         self.source = "android"
         self.username = "homeassisstant"
         self.descr = ""
         self.pwd = pwd
-        self.on_status_callback = on_status_callback 
+        self.on_status_callback = on_status_callback
+
+        # Per-instance logger so multi-gate logs identify which gate they belong to
+        # (e.g. "nicegate.front_gate"). Falls back to the host when no id is given.
+        self._logger = logging.getLogger(f"nicegate.{log_id or host}")
 
         self.client_challenge = f"{random.randint(1, 9999999):08x}".upper()
         self.server_challenge = ""
@@ -49,21 +54,21 @@ class NiceGateApi:
     async def start(self):
         """Start the connection supervisor."""
         if self._supervisor_task is None or self._supervisor_task.done():
-            _LOGGER.info("Starting NiceGate API supervisor...")
+            self._logger.info("Starting NiceGate API supervisor...")
             self._shutdown_event.clear()
             self._supervisor_task = asyncio.create_task(self._connection_supervisor())
 
     async def close(self):
         """Stop the supervisor and close the connection."""
         if self._supervisor_task and not self._supervisor_task.done():
-            _LOGGER.info("Closing NiceGate API supervisor...")
+            self._logger.info("Closing NiceGate API supervisor...")
             self._shutdown_event.set()
             self._supervisor_task.cancel()
             try:
                 await self._supervisor_task
             except asyncio.CancelledError:
-                _LOGGER.warning("Supervisor task was cancelled.")
-            _LOGGER.info("NiceGate API supervisor closed.")
+                self._logger.warning("Supervisor task was cancelled.")
+            self._logger.info("NiceGate API supervisor closed.")
         await self.disconnect()
 
 
@@ -107,36 +112,36 @@ class NiceGateApi:
             match = re.search(r'<Authentication\s+id=[\'"]?([^\'" >]+)[\'"]?\s+username=[\'"]?([^\'" >]+)[\'"]?\s+pwd=[\'"]?([^\'" >]+)[\'"]?', pair)
             if match:
                 self.pwd = match.groups()[2]
-                _LOGGER.debug(f"User paired. Password {self.pwd}")
+                self._logger.debug(f"User paired. Password {self.pwd}")
                 return self.pwd
             else:
-                _LOGGER.warning("No user found")
+                self._logger.warning("No user found")
                 return None
         except ConnectionError as error_msg:
-            _LOGGER.error(error_msg, exc_info=True)
+            self._logger.error(error_msg, exc_info=True)
         except TimeoutError:
-            _LOGGER.warning("Timeout")
+            self._logger.warning("Timeout")
         except Exception as ex:
-            _LOGGER.error(ex, exc_info=True)
+            self._logger.error(ex, exc_info=True)
 
         if writer is not None:
             try:
                 writer.close()
                 await writer.wait_closed()
             except Exception as e:
-                _LOGGER.warning(f"Error closing writer: {e}")
+                self._logger.warning(f"Error closing writer: {e}")
 
         return self.pwd
     
 
     async def _connection_supervisor(self):
-        _LOGGER.info("Connection supervisor started.")
+        self._logger.debug("Connection supervisor started.")
         while not self._shutdown_event.is_set():
             try:
                 if not await self._connect_and_handshake():
                     raise ConnectionError("Failed to connect and complete handshake.")
 
-                _LOGGER.info("Connection successful.")
+                self._logger.info("Connection successful.")
                 self._reconnect_delay = INITIAL_RECONNECT_DELAY
                 self._ready_event.set()
                 
@@ -153,13 +158,13 @@ class NiceGateApi:
                 await asyncio.gather(*pending, return_exceptions=True)
 
             except asyncio.CancelledError:
-                _LOGGER.info("Connection supervisor cancelled.")
+                self._logger.info("Connection supervisor cancelled.")
                 break
             except Exception as e:
-                _LOGGER.error(f"Supervisor error: {e}")
+                self._logger.error(f"Supervisor error: {e}")
             
             await self.disconnect()
-            _LOGGER.info(f"Waiting {self._reconnect_delay}s before reconnecting...")
+            self._logger.info(f"Waiting {self._reconnect_delay}s before reconnecting...")
             await asyncio.sleep(self._reconnect_delay)
             self._reconnect_delay = min(self._reconnect_delay * BACKOFF_FACTOR, MAX_RECONNECT_DELAY)
 
@@ -235,7 +240,7 @@ class NiceGateApi:
             await asyncio.wait_for(self._ready_event.wait(), timeout=15)
             return True
         except asyncio.TimeoutError:
-            _LOGGER.warning("Timeout waiting for connection readiness.")
+            self._logger.warning("Timeout waiting for connection readiness.")
             return False
 
     async def _connect_and_handshake(self) -> bool:
@@ -246,7 +251,7 @@ class NiceGateApi:
             ctx.set_ciphers("ALL:@SECLEVEL=0")
             ctx.options |= 0x4
 
-            _LOGGER.debug("Opening connection to %s:443", self.host)
+            self._logger.debug("Opening connection to %s:443", self.host)
             reader, writer = await asyncio.open_connection(self.host, 443, ssl=ctx)
             
             sock = writer.get_extra_info('socket')
@@ -260,7 +265,7 @@ class NiceGateApi:
                     if hasattr(socket, 'TCP_KEEPCNT'):
                         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
                 except Exception as ex:
-                    _LOGGER.warning(f"Could not set socket keepalive options: {ex}")
+                    self._logger.warning(f"Could not set socket keepalive options: {ex}")
 
             self.serv_reader = reader
             self.serv_writer = writer
@@ -285,23 +290,23 @@ class NiceGateApi:
                 raise ConnectionError("Server challenge not found in CONNECT response")
             self.server_challenge = match.group(1)
             
-            _LOGGER.info("Connection and handshake successful.")
+            self._logger.debug("Connection and handshake successful.")
             return True
 
         except Exception as e:
-            _LOGGER.error("connect_and_handshake failed: %s", e)
+            self._logger.error("connect_and_handshake failed: %s", e)
             await self.disconnect()
             return False
 
     async def disconnect(self) -> None:
-        _LOGGER.debug("Disconnecting and resetting state...")
+        self._logger.debug("Disconnecting and resetting state...")
         if self.serv_writer:
             try:
                 self.serv_writer.close()
                 await self.serv_writer.wait_closed()
-                _LOGGER.info("Connection closed successfully.")
+                self._logger.info("Connection closed successfully.")
             except Exception as e:
-                _LOGGER.error(f"Error closing connection: {e}")
+                self._logger.error(f"Error closing connection: {e}")
 
         self.serv_reader = None
         self.serv_writer = None
@@ -320,80 +325,80 @@ class NiceGateApi:
             clean_xml = re.sub(r'\sxmlns="[^"]+"', '', msg, count=1)
             resp = ET.fromstring(clean_xml)
         except Exception as e:
-            _LOGGER.exception("Failed to parse incoming XML: %s error: %s", msg, e)
+            self._logger.exception("Failed to parse incoming XML: %s error: %s", msg, e)
             return
 
         if resp.tag in ("Event", "Response"):
             node = resp.find(".//DoorStatus")
             
             if node is None:
-                _LOGGER.debug("Node DoorStatus not found in XML tree.")
+                self._logger.debug("Node DoorStatus not found in XML tree.")
             
             new_status = node.text.strip() if node is not None else None
             
             if new_status and new_status != self.gate_status:
                 self.gate_status = new_status
-                _LOGGER.info("Gate status changed to: '%s'", self.gate_status)
+                self._logger.info("Gate status changed to: '%s'", self.gate_status)
                 
                 if self.on_status_callback:
                     try:
                         self.on_status_callback(self.gate_status)
                     except Exception as e:
-                        _LOGGER.error(f"Error in status callback: {e}")
+                        self._logger.error(f"Error in status callback: {e}")
 
     async def _send_command(self, command_type: str, body: str = ""):
         if not await self._ensure_connected():
-            _LOGGER.error("Cannot send command '%s': not connected/ready.", command_type)
+            self._logger.error("Cannot send command '%s': not connected/ready.", command_type)
             return
         
         if not self.serv_writer:
-            _LOGGER.error("Cannot send command '%s': writer is not available.", command_type)
+            self._logger.error("Cannot send command '%s': writer is not available.", command_type)
             return
 
         try:
             msg = self.__build_message(command_type, body)
             self.serv_writer.write(msg)
             await self.serv_writer.drain()
-            _LOGGER.debug("Sent command: %s", command_type)
+            self._logger.debug("Sent command: %s", command_type)
         except Exception as e:
-            _LOGGER.exception("Failed to send command '%s': %s", command_type, e)
+            self._logger.exception("Failed to send command '%s': %s", command_type, e)
             raise e
 
     async def status(self) -> None:
-        _LOGGER.debug("Requesting status...")
+        self._logger.debug("Requesting status...")
         await self._send_command("STATUS")
 
     async def info(self) -> None:
-        _LOGGER.debug("Requesting info...")
+        self._logger.debug("Requesting info...")
         await self._send_command("INFO")
 
     async def change(self, command: str) -> None:
         body = f'<Devices><Device id="1"><Services><DoorAction>{command}</DoorAction></Services></Device></Devices>'
-        _LOGGER.debug("Sending change command: %s", command)
+        self._logger.debug("Sending change command: %s", command)
         await self._send_command("CHANGE", body)
 
     async def t4(self, command: str) -> None:
         body = f'<Devices><Device id="1"><Services><T4Action>{command}</T4Action></Services></Device></Devices>'
-        _LOGGER.debug("Sending T4 command: %s", command)
+        self._logger.debug("Sending T4 command: %s", command)
         await self._send_command("CHANGE", body)
 
     async def check(self) -> None:
         body = f'<Authentication id="{self.session_id}" username="{self.username}"/>'
-        _LOGGER.debug("Sending check command...")
+        self._logger.debug("Sending check command...")
         await self._send_command("CHECK", body)
 
     async def _recvloop(self) -> None:
-        _LOGGER.debug("Receive loop started.")
+        self._logger.debug("Receive loop started.")
         try:
             while not self._shutdown_event.is_set():
                 msg = await self.__recvall()
                 await self.__process_event(msg)
         except (asyncio.CancelledError, ConnectionError):
-            _LOGGER.debug("Receive loop stopping.")
+            self._logger.debug("Receive loop stopping.")
         except Exception as e:
-            _LOGGER.exception("Unhandled exception in recvloop: %s", e)
+            self._logger.exception("Unhandled exception in recvloop: %s", e)
         finally:
-            _LOGGER.info("Receive loop terminated.")
+            self._logger.info("Receive loop terminated.")
 
     async def __recvall(self) -> str:
         if not self.serv_reader:
@@ -419,26 +424,26 @@ class NiceGateApi:
         except asyncio.IncompleteReadError:
             raise ConnectionError("Socket closed prematurely.")
         except asyncio.TimeoutError:
-            _LOGGER.debug("Read timeout in __recvall, connection likely idle.")
+            self._logger.debug("Read timeout in __recvall, connection likely idle.")
             raise ConnectionError("Read timed out.")
         except OSError as e:
             raise ConnectionError(f"Socket error during read: {e}")
 
     async def _keep_alive_loop(self) -> None:
-        _LOGGER.debug("Keep-alive loop started.")
+        self._logger.debug("Keep-alive loop started.")
         try:
             while not self._shutdown_event.is_set():
                 await asyncio.sleep(60)
                 await self.check()
         except asyncio.CancelledError:
-            _LOGGER.info("Keep-alive loop cancelled.")
+            self._logger.info("Keep-alive loop cancelled.")
         except Exception as e:
-            _LOGGER.warning("Keep-alive check failed: %s", e)
+            self._logger.warning("Keep-alive check failed: %s", e)
         finally:
-            _LOGGER.info("Keep-alive loop terminated.")
+            self._logger.info("Keep-alive loop terminated.")
 
     def __find_session_id(self, msg: str) -> None:
         match = re.search(r'Authentication\sid=[\'\"]?([^\'\" >]+)', msg)
         if match:
             self.session_id = match.group(1)
-            _LOGGER.debug("Session ID found: %s", self.session_id)
+            self._logger.debug("Session ID found: %s", self.session_id)
